@@ -1,0 +1,1 @@
+# crypto-scalping_bot
