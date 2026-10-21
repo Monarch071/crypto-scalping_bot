@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, fields
 
 @dataclass
 class SignalConfig:
-    exchange: str = "bybit"
+    exchange: str = "binance"
     quote: str = "USDT"
     universe_size: int = 20
     exclude: list[str] = field(default_factory=list)

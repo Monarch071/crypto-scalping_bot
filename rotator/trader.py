@@ -57,6 +57,7 @@ class Trader:
         self.notify = notify
         self.path = Path(cfg.state_file)
         self.state = self._load()
+        self._now: float | None = None
 
     # --- состояние ---
     def _load(self) -> dict:
@@ -77,7 +78,8 @@ class Trader:
             await self.notify(text)
 
     def _event(self, text: str) -> None:
-        self.state["log"] = (self.state["log"] + [f"{datetime.now(timezone.utc):%Y-%m-%d %H:%M} {text}"])[-200:]
+        when = datetime.fromtimestamp(self._now, timezone.utc) if self._now else datetime.now(timezone.utc)
+        self.state["log"] = (self.state["log"] + [f"{when:%Y-%m-%d %H:%M} {text}"])[-200:]
 
     # --- оценка портфеля ---
     async def valuation(self) -> tuple[float, dict[str, float], dict[str, float]]:
@@ -85,12 +87,17 @@ class Trader:
         managed = [s for s in self.state["managed"] if bal.get(s.split("/")[0], 0) > 0]
         prices = await self.md.prices(managed) if managed else {}
         values = {s: bal[s.split("/")[0]] * prices[s] for s in managed if s in prices}
-        equity = bal.get(self.cfg.quote, 0.0) + sum(values.values())
-        return equity, values, prices
+        held = sum(values.values())
+        free = bal.get(self.cfg.quote, 0.0)
+        if self.cfg.max_capital_usdt > 0:
+            # Бот распоряжается только своим потолком: позиции + столько USDT, сколько осталось до потолка.
+            free = min(free, max(self.cfg.max_capital_usdt - held, 0.0))
+        return free + held, values, prices
 
     # --- основной шаг (раз в час) ---
     async def step(self, now: float | None = None) -> None:
         now = now or time.time()
+        self._now = now
         equity, values, _ = await self.valuation()
         self.state["equity"] = equity
         self.state["peak_equity"] = max(self.state["peak_equity"], equity)
@@ -131,6 +138,9 @@ class Trader:
             amount = o.usdt / last
             if o.side == "buy":
                 quote_free = (await self.account.balances()).get(cfg.quote, 0.0)
+                if cfg.max_capital_usdt > 0:
+                    held = sum(v for s, v in (await self.valuation())[1].items())
+                    quote_free = min(quote_free, max(cfg.max_capital_usdt - held, 0.0))
                 amount = min(amount, quote_free / (limit * (1 + cfg.fee_bps / 1e4)))
             try:
                 fill = await self.account.trade(o.symbol, o.side, amount, last, limit)
@@ -138,6 +148,7 @@ class Trader:
                 await self._say(f"⚠️ Ордер {o.side} {o.symbol} не прошёл: {e}")
                 continue
             if fill.amount > 0:
+                self.state["trades"] = self.state.get("trades", 0) + 1
                 done.append(f"{'🟢 купил' if o.side == 'buy' else '🔴 продал'} {o.symbol} "
                             f"на {fill.amount * fill.price:.2f} по {fill.price:.6g}")
                 self._event(f"{o.side} {o.symbol} {fill.amount:.8g} @ {fill.price:.8g} fee {fill.fee_usdt:.4f}")

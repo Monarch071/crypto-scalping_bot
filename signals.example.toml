@@ -1,7 +1,7 @@
 # Бот сигналов для ручной торговли. Скопируйте в signals.toml: python signals.py -c signals.toml run
 # Ключи API бирже не нужны. Для Telegram: TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в переменных окружения.
 
-exchange = "bybit"
+exchange = "binance"
 universe_size = 20          # топ-20 спотовых пар по объёму
 exclude = []
 

@@ -33,6 +33,44 @@ BASE = {
 }
 
 
+LISTING = {
+    "futures": "data/futures/um/monthly/klines/",
+    "spot": "data/spot/monthly/klines/",
+}
+BUCKET = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision"
+
+
+def parse_listing(xml: str) -> tuple[list[str], str | None]:
+    """Имена символов из ответа S3 (CommonPrefixes) и маркер следующей страницы."""
+    import xml.etree.ElementTree as ET
+
+    root = ET.fromstring(xml)
+    ns = {"s3": root.tag.split("}")[0].strip("{")} if root.tag.startswith("{") else {}
+    q = (lambda tag: f"s3:{tag}") if ns else (lambda tag: tag)
+    prefixes = [p.text for p in root.iter(f"{{{ns['s3']}}}Prefix" if ns else "Prefix")]
+    syms = [p.rstrip("/").split("/")[-1] for p in prefixes if p and p.count("/") > 4]
+    truncated = (root.findtext(q("IsTruncated"), namespaces=ns) or "false") == "true"
+    nxt = root.findtext(q("NextMarker"), namespaces=ns) or (prefixes[-1] if prefixes else None)
+    return syms, (nxt if truncated else None)
+
+
+def all_symbols(market: str, quote: str = "USDT") -> list[str]:
+    """Все пары к quote, которые когда-либо были на Binance, включая уже исключённые с биржи."""
+    import urllib.parse
+
+    out, marker = [], ""
+    while True:
+        q = urllib.parse.urlencode({"delimiter": "/", "prefix": LISTING[market], "marker": marker})
+        with urllib.request.urlopen(f"{BUCKET}?{q}", timeout=60) as r:
+            syms, marker = parse_listing(r.read().decode())
+        out += syms
+        if not marker:
+            break
+    stable_bases = ("USDC", "BUSD", "TUSD", "FDUSD", "USDP", "DAI", "EUR", "GBP", "AEUR", "UST")
+    return sorted(s for s in set(out) if s.endswith(quote) and not s.startswith(stable_bases)
+                  and not any(x in s for x in ("UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT")))
+
+
 def months(start: str, end: str):
     y, m = map(int, start.split("-"))
     ey, em = map(int, end.split("-"))
@@ -80,7 +118,9 @@ def download(symbol, interval, market, start, end, out_dir) -> Path:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("symbols", nargs="+")
+    ap.add_argument("symbols", nargs="*")
+    ap.add_argument("--all-usdt", action="store_true",
+                    help="все USDT-пары за всю историю Binance, включая исключённые (сотни монет, долго)")
     ap.add_argument("--interval", default="1m", help="1m, 5m, 15m, 1h, 4h, 1d")
     ap.add_argument("--start", default="2022-01")
     ap.add_argument("--end", required=True, help="последний полный месяц, например 2026-09")
@@ -88,6 +128,11 @@ def main():
     ap.add_argument("--out-dir", default="data")
     ap.add_argument("--panel", help="собрать все монеты в один parquet (нужны pandas и pyarrow)")
     args = ap.parse_args()
+    if args.all_usdt:
+        args.symbols = all_symbols(args.market)
+        print(f"Пар к USDT в архиве Binance: {len(args.symbols)}", file=sys.stderr)
+    if not args.symbols:
+        ap.error("укажите символы или --all-usdt")
     files = {s: download(s, args.interval, args.market, args.start, args.end, args.out_dir) for s in args.symbols}
     if args.panel:
         import pandas as pd

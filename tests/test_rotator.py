@@ -139,3 +139,22 @@ def test_stale_data_skips_rebalance(tmp_path):
     trader, md = make_trader(tmp_path, close)
     asyncio.run(trader.step(md.t.timestamp() + 3600 * 9))  # последней свече 9 часов
     assert trader.state["targets"] == {} and trader.account.bal == {"USDT": 1000.0}
+
+
+def test_capital_cap_limits_what_bot_uses(tmp_path):
+    close = panel()
+    trader, md = make_trader(tmp_path, close, max_capital_usdt=300.0)
+    asyncio.run(trader.step(md.t.timestamp() + 3600))
+    bal = trader.account.bal
+    assert bal["USDT"] >= 700 - 1e-6  # всё, что выше потолка, осталось нетронутым
+    assert trader.state["equity"] == pytest.approx(300.0, rel=0.01)
+
+
+def test_replay_runs_live_code_over_history():
+    from rotator.replay import replay
+
+    close = panel(hours=2200)
+    qvol = close * 0 + 1e6
+    eq, trader = replay(close, qvol, RotationConfig(top_k=2), str(close.index[1900].date()))
+    assert len(eq) > 200 and trader.state.get("trades", 0) > 0
+    assert eq.iloc[0] == pytest.approx(1000.0, rel=0.02)

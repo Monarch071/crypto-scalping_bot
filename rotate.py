@@ -32,7 +32,10 @@ def make_exchange(cfg: RotationConfig, private: bool):
         if not cfg.api_key or not cfg.api_secret:
             sys.exit("Нужны переменные окружения BOT_API_KEY и BOT_API_SECRET")
         params.update(apiKey=cfg.api_key, secret=cfg.api_secret)
-    return getattr(ccxt, cfg.exchange)(params)
+    ex = getattr(ccxt, cfg.exchange)(params)
+    if cfg.testnet:
+        ex.set_sandbox_mode(True)
+    return ex
 
 
 def make_notifier():
@@ -101,6 +104,67 @@ def cmd_backtest(cfg: RotationConfig, panel: str, cost: float | None) -> None:
     print(report(ret[ret.index.year >= 2021], w[w.index.year >= 2021]))
 
 
+def cmd_replay(cfg: RotationConfig, panel: str, start: str, end: str | None) -> None:
+    from rotator.backtest import load_panel, run
+    from rotator.replay import replay
+
+    close, qvol = load_panel(panel)
+    eq, trader = replay(close, qvol, cfg, start, end)
+    ret, _ = run(close, qvol, cfg, cfg.fee_bps + 5.0)
+    bt = (1 + ret.loc[eq.index[0]:eq.index[-1]]).prod() - 1
+    trades = trader.state.get("trades", 0)
+    print(f"Прогон живого кода {eq.index[0]:%Y-%m-%d} — {eq.index[-1]:%Y-%m-%d}: "
+          f"{cfg.paper_start_usdt:.0f} → {eq.iloc[-1]:.2f} {cfg.quote} ({eq.iloc[-1] / cfg.paper_start_usdt - 1:+.1%}), "
+          f"макс. просадка {(1 - eq / eq.cummax()).max():.1%}, сделок {trades}")
+    print(f"Векторный бэктест того же периода: {bt:+.1%}")
+    print(f"Расхождение: {(eq.iloc[-1] / cfg.paper_start_usdt - 1) - bt:+.1%} "
+          f"(допустимо несколько % из-за полосы ребаланса и порядка исполнения)")
+    print("Последние события:\n" + "\n".join(trader.state["log"][-8:]))
+
+
+async def cmd_preflight(cfg: RotationConfig) -> None:
+    """Проверка перед запуском на реальные деньги. Ничего не покупает и не продаёт."""
+    ok = True
+
+    def mark(good: bool, text: str) -> None:
+        nonlocal ok
+        ok &= good
+        print(("✅ " if good else "❌ ") + text)
+
+    mark(cfg.mode == "live", f"mode = {cfg.mode!r} (для реальных денег нужно 'live')")
+    mark(cfg.max_capital_usdt > 0, f"потолок капитала max_capital_usdt = {cfg.max_capital_usdt}")
+    ex = make_exchange(cfg, private=True)
+    try:
+        await ex.load_markets()
+        server = await ex.fetch_time()
+        drift = abs(server / 1000 - time.time())
+        mark(drift < 1.0, f"часы компьютера расходятся с биржей на {drift:.2f} с")
+        bal = await ex.fetch_balance()
+        usdt = float((bal.get("total") or {}).get(cfg.quote, 0.0))
+        mark(usdt >= cfg.max_capital_usdt * 0.99, f"на счёте {usdt:.2f} {cfg.quote}, потолок бота {cfg.max_capital_usdt}")
+        if cfg.exchange == "binance" and not cfg.testnet:
+            r = await ex.sapi_get_account_apirestrictions()
+            mark(not r.get("enableWithdrawals"), "у ключа API запрещён вывод средств")
+            mark(bool(r.get("enableSpotAndMarginTrading")), "у ключа API разрешена спотовая торговля")
+            mark(bool(r.get("ipRestrict")), "ключ API привязан к IP-адресу (рекомендуется)")
+        md = MarketData(ex)
+        uni = await md.universe(cfg.quote, cfg.universe_size, set(cfg.exclude), "BTC/USDT")
+        per_coin = cfg.max_capital_usdt * cfg.capital_fraction / cfg.top_k
+        worst = max((ex.markets[s].get("limits", {}).get("cost", {}).get("min") or 0.0) for s in uni)
+        mark(per_coin >= max(2 * worst, cfg.min_trade_usdt * 2),
+             f"на монету ≈{per_coin:.2f} {cfg.quote}, минимальный ордер биржи до {worst} {cfg.quote}")
+        mark(len(uni) >= 2 * cfg.top_k, f"монет в отборе: {len(uni)}")
+    except Exception as e:  # noqa: BLE001
+        mark(False, f"ошибка обращения к бирже: {e}")
+    finally:
+        await ex.close()
+    n = make_notifier()
+    await n.start({})
+    await n.send("✅ Проверка связи с ботом ротации")
+    await n.stop()
+    print("\nИТОГ: " + ("можно запускать" if ok else "есть проблемы — исправьте перед запуском"))
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Бот ротации монет по моментуму")
     ap.add_argument("-c", "--config", default=None)
@@ -109,6 +173,11 @@ def main() -> None:
     r.add_argument("--live", action="store_true")
     r.add_argument("--once", action="store_true")
     sub.add_parser("status")
+    sub.add_parser("preflight")
+    rp = sub.add_parser("replay")
+    rp.add_argument("panel")
+    rp.add_argument("--start", required=True)
+    rp.add_argument("--end", default=None)
     bt = sub.add_parser("backtest")
     bt.add_argument("panel")
     bt.add_argument("--cost-bps", type=float, default=None)
@@ -119,6 +188,10 @@ def main() -> None:
         asyncio.run(cmd_run(cfg, args.live, args.once))
     elif args.cmd == "status":
         print(Trader(cfg, None, None).status())
+    elif args.cmd == "preflight":
+        asyncio.run(cmd_preflight(cfg))
+    elif args.cmd == "replay":
+        cmd_replay(cfg, args.panel, args.start, args.end)
     else:
         cmd_backtest(cfg, args.panel, args.cost_bps)
 
