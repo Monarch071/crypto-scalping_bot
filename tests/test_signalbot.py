@@ -30,7 +30,7 @@ def trend_then_breakout(n=1500, seed=0):
 
 
 def cfg(tmp_path=None, **kw):
-    base = dict(min_votes=14)
+    base = dict(min_votes=14, top_k_filter=0, tp_atr=4.0, exit_votes=0, max_hold_h=24)
     base.update(kw)
     if tmp_path is not None:
         base["state_file"] = str(tmp_path / "s.json")
@@ -78,6 +78,7 @@ def test_check_exit_rules():
     assert check_exit(sig(), 104.5, 99, 104, t) == ("tp", 104.0)
     assert check_exit(sig(), 101, 99, 100, t) is None
     assert check_exit(sig(), 101, 99, 100.5, pd.Timestamp("2026-01-02T01:00", tz="UTC")) == ("time", 100.5)
+    assert check_exit(sig(tp=None), 150, 99, 140, t) is None  # без тейка рост не закрывает сделку
     short = sig(side="short", sl=102.0, tp=96.0)
     assert check_exit(short, 101, 95.5, 96, t) == ("tp", 96.0)
 
@@ -89,6 +90,8 @@ def test_result_in_r_includes_costs():
     assert s.r == pytest.approx((400 - 17.5) / 200)
     s = close_signal(sig(), "sl", 98.0, pd.Timestamp("2026-01-01T06:00", tz="UTC"), c)
     assert s.r == pytest.approx((-200 - 26.0) / 200)
+    s = close_signal(sig(), "signal", 103.0, pd.Timestamp("2026-01-01T06:00", tz="UTC"), c)
+    assert s.r == pytest.approx((300 - 31.0) / 200)
 
 
 class FakeMarket:
@@ -133,3 +136,35 @@ def test_bot_end_to_end_signal_then_exit_and_stats(tmp_path):
     assert "Закрыто сигналов: 1" in bot.stats()
     # Журнал переживает перезапуск.
     assert len(SignalBot(c, None).closed) == 1
+
+
+def test_default_rules_no_take_profit_and_exit_when_strategies_disagree(tmp_path):
+    """Правила по умолчанию: без тейка, выход по сообщению бота, когда «за» станет меньше 10 из 15."""
+    btc, coin = trend_then_breakout()
+    c = SignalConfig(state_file=str(tmp_path / "s.json"), min_votes=14, top_k_filter=0)
+    assert c.tp_atr == 0 and c.exit_votes == 10 and c.max_hold_h == 72
+    i, expected = first_signal(btc, coin, c)
+    assert expected.tp is None
+    # После сигнала монета резко разворачивается вниз (но не до стопа) — согласие стратегий пропадает.
+    last = coin.close.iloc[i - 1]
+    path = last * np.exp(np.r_[np.linspace(0.001, 0.004, 3), np.linspace(0.003, -0.012, 12)])
+    down = candles(np.r_[coin.close.iloc[:i].to_numpy(), path], vol=np.r_[coin.volume.iloc[:i].to_numpy(),
+                                                                          np.full(15, 100.0)])
+    btc2 = candles(np.r_[btc.close.iloc[:i].to_numpy(), btc.close.iloc[i - 1] * np.ones(15)])
+    md = FakeMarket({BTC: btc2, "X/USDT": down})
+    msgs = []
+
+    async def notify(text):
+        msgs.append(text)
+
+    bot = SignalBot(c, md, notify)
+    md.t = down.index[i - 1]
+    asyncio.run(bot.step(md.t.timestamp() + 3600 + 30))
+    assert len(bot.open) == 1 and "не ставить" in msgs[-1]
+    for k in range(i, i + 15):
+        md.t = down.index[k]
+        asyncio.run(bot.step(md.t.timestamp() + 3600 + 30))
+        if not bot.open:
+            break
+    assert bot.closed and bot.closed[0].status == "signal"
+    assert "больше не согласны" in msgs[-1]

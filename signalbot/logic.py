@@ -20,12 +20,12 @@ class Signal:
     time: str            # ISO, закрытие часа сигнала
     entry: float
     sl: float
-    tp: float
+    tp: float | None     # None — без тейк-профита, выход по сигналу бота
     expires: str         # ISO
     size: float          # количество монет при заданном риске
     risk_usdt: float
     agree: list[str]
-    status: str = "open"  # open | tp | sl | time
+    status: str = "open"  # open | tp | sl | time | signal
     exit_price: float | None = None
     exit_time: str | None = None
     r: float | None = None
@@ -59,12 +59,13 @@ def find_signal(symbol: str, df: pd.DataFrame, btc_close: pd.Series, cfg: Signal
         if now_n >= cfg.min_votes > prev_n:
             entry = float(df.close.iloc[-1])
             sl = entry - s * cfg.sl_atr * a
-            tp = entry + s * cfg.tp_atr * a
+            tp = float(entry + s * cfg.tp_atr * a) if cfg.tp_atr > 0 else None
             risk = cfg.deposit_usdt * cfg.risk_pct / 100
             t = df.index[-1]
             return Signal(id=f"{symbol}-{t:%Y%m%d%H}-{side}", symbol=symbol, side=side, time=t.isoformat(),
-                          entry=entry, sl=float(sl), tp=float(tp),
-                          expires=(t + pd.Timedelta(hours=cfg.max_hold_h)).isoformat(),
+                          entry=entry, sl=float(sl), tp=tp,
+                          # Вход по закрытию часа t (в t + 1 ч), выход по времени — через max_hold_h после входа.
+                          expires=(t + pd.Timedelta(hours=cfg.max_hold_h + 1)).isoformat(),
                           size=risk / abs(entry - sl), risk_usdt=risk,
                           agree=[n for n in V.columns if last[n] == s])
     return None
@@ -75,15 +76,22 @@ def check_exit(sig: Signal, high: float, low: float, close: float, now: pd.Times
     s = sig.sign
     if (low <= sig.sl) if s > 0 else (high >= sig.sl):
         return "sl", sig.sl
-    if (high >= sig.tp) if s > 0 else (low <= sig.tp):
+    if sig.tp is not None and ((high >= sig.tp) if s > 0 else (low <= sig.tp)):
         return "tp", sig.tp
     if now >= pd.Timestamp(sig.expires):
         return "time", close
     return None
 
 
+def agree_count(df: pd.DataFrame, btc_close: pd.Series, side: str) -> int:
+    """Сколько стратегий «за» направление сделки на последней закрытой свече."""
+    last = vote_table(df, btc_close).iloc[-1]
+    return int((last == (1 if side == "long" else -1)).sum())
+
+
 def close_signal(sig: Signal, kind: str, price: float, when: pd.Timestamp, cfg: SignalConfig) -> Signal:
-    cost = cfg.entry_cost_bps + {"tp": cfg.tp_cost_bps, "sl": cfg.sl_cost_bps, "time": cfg.time_exit_cost_bps}[kind]
+    cost = cfg.entry_cost_bps + {"tp": cfg.tp_cost_bps, "sl": cfg.sl_cost_bps, "time": cfg.time_exit_cost_bps,
+                                 "signal": cfg.signal_exit_cost_bps}[kind]
     gross = sig.sign * (price / sig.entry - 1) * 1e4
     sig.status, sig.exit_price, sig.exit_time = kind, price, when.isoformat()
     sig.net_bps = gross - cost
@@ -99,8 +107,8 @@ def stats(closed: list[Signal]) -> str:
     kinds = pd.Series([s.status for s in closed]).value_counts().to_dict()
     eq = np.cumsum(r)
     dd = float((np.maximum.accumulate(eq) - eq).max())
-    return (f"Закрыто сигналов: {len(r)} (тейк {kinds.get('tp', 0)}, стоп {kinds.get('sl', 0)}, "
-            f"по времени {kinds.get('time', 0)})\n"
+    return (f"Закрыто сигналов: {len(r)} (по сигналу {kinds.get('signal', 0)}, тейк {kinds.get('tp', 0)}, "
+            f"стоп {kinds.get('sl', 0)}, по времени {kinds.get('time', 0)})\n"
             f"Прибыльных: {(r > 0).mean():.0%}\nСредний результат: {r.mean():+.2f}R "
             f"({np.mean([s.net_bps for s in closed]):+.1f} б.п.)\n"
             f"Сумма: {r.sum():+.1f}R — при риске 1% это {r.sum():+.1f}% депозита\n"
@@ -112,19 +120,21 @@ def fmt_price(x: float) -> str:
     return f"{x:.6g}"
 
 
-def format_signal(sig: Signal, rank: int | None = None) -> str:
+def format_signal(sig: Signal, rank: int | None = None, exit_votes: int = 0) -> str:
     arrow = "🟢 ЛОНГ (покупка)" if sig.side == "long" else "🔴 ШОРТ (продажа)"
     pct = lambda p: (p / sig.entry - 1) * 100  # noqa: E731
+    tp = (f"Тейк-профит: {fmt_price(sig.tp)} ({pct(sig.tp):+.2f}%)\n" if sig.tp is not None else
+          f"Тейк-профит: не ставить — выход по сообщению бота, когда «за» станет меньше {exit_votes} из 15\n")
     return (f"{arrow} {sig.symbol}\n"
             f"Вход: ~{fmt_price(sig.entry)}\n"
-            f"Стоп-лосс: {fmt_price(sig.sl)} ({pct(sig.sl):+.2f}%)\n"
-            f"Тейк-профит: {fmt_price(sig.tp)} ({pct(sig.tp):+.2f}%)\n"
-            f"Закрыть, если не сработало до: {pd.Timestamp(sig.expires):%d.%m %H:%M} UTC\n"
+            f"Стоп-лосс: {fmt_price(sig.sl)} ({pct(sig.sl):+.2f}%) — поставить сразу\n"
+            + tp +
+            f"Закрыть в любом случае до: {pd.Timestamp(sig.expires):%d.%m %H:%M} UTC\n"
             f"Размер: {sig.size:.6g} {sig.symbol.split('/')[0]} (≈{sig.size * sig.entry:.2f} USDT, "
             f"риск {sig.risk_usdt:.2f} USDT)\n"
             f"За: {len(sig.agree)} из {STRATEGY_COUNT}"
             + (f", моментум отн. BTC: #{rank}" if rank else "") +
-            "\nСтоп и тейк ставьте сразу при открытии позиции.")
+            "\nВажно: входите по каждому сигналу — прибыль дают редкие крупные сделки.")
 
 
 def to_dict(sig: Signal) -> dict:
