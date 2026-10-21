@@ -34,7 +34,17 @@ def load(paths, start=START):
     frames = [pd.read_csv(p) for p in paths]
     df = pd.concat(frames).drop_duplicates("timestamp").sort_values("timestamp")
     df.index = pd.to_datetime(df["timestamp"], unit="s", utc=True)
-    return df.loc[start:, ["open", "high", "low", "close", "volume"]].astype(float)
+    df = df.loc[start:, ["open", "high", "low", "close", "volume"]].astype(float)
+    # Бары строятся по номеру минуты, поэтому сетка должна быть сплошной.
+    # Пропуски (техработы биржи) заполняем плоскими свечами с нулевым объёмом.
+    full = pd.date_range(df.index[0], df.index[-1], freq="min")
+    if len(full) != len(df):
+        df = df.reindex(full)
+        df["close"] = df["close"].ffill()
+        for col in ("open", "high", "low"):
+            df[col] = df[col].fillna(df["close"])
+        df["volume"] = df["volume"].fillna(0.0)
+    return df
 
 
 def bars(m: pd.DataFrame, tf: int) -> pd.DataFrame:

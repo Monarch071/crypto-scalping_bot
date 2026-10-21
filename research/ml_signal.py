@@ -87,8 +87,13 @@ def main():
         b = bars(m, tf)
         f = features(b, tf)
         y, step = target(b, c1, horizon)
-        pred, tested = ensemble_preds(b, f, y, step, horizon, tf)
-        np.save(out / f"pred_tf{tf}_h{horizon}.npy", pred)
+        cache = out / f"pred_tf{tf}_h{horizon}.npz"
+        if cache.exists():
+            z = np.load(cache)
+            pred, tested = z["pred"], z["tested"]
+        else:
+            pred, tested = ensemble_preds(b, f, y, step, horizon, tf)
+            np.savez(cache, pred=pred, tested=tested)
         fwd = y.to_numpy()
         mask = tested & ~np.isnan(pred) & ~np.isnan(fwd)
         from scipy.stats import spearmanr
@@ -105,7 +110,7 @@ def main():
         w("|---|---|---|---|---|---|---|---|---|---|")
         years = mask.sum() / (MIN_PER_YEAR / tf)
         for q in (0.9, 0.95, 0.98, 0.99):
-            thr = abs_p.rolling(win, min_periods=win // 3).quantile(q).shift(1).to_numpy()
+            thr = abs_p.rolling(win, min_periods=win // 3).quantile(q).shift(1).to_numpy().copy()
             thr[~tested] = np.nan
             for c, cost in [("без комиссий", 0.0)] + list(COSTS.items()):
                 pos, rets, trades = trade(pred, exec_px, horizon, thr, cost)
