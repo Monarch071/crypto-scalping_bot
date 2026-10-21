@@ -73,21 +73,29 @@ class MarketData:
                 since_ms = nxt
         return out
 
-    async def closes(self, symbols: list[str], hours: int, now: float | None = None) -> pd.DataFrame:
-        """Цены закрытия последних закрытых часовых свечей: строки — часы UTC, колонки — пары."""
+    async def candles(self, symbols: list[str], hours: int, now: float | None = None) -> dict[str, pd.DataFrame]:
+        """Закрытые часовые свечи (open, high, low, close, volume) по каждой паре, индекс — часы UTC."""
         now_ms = int((now or time.time()) * 1000)
         since = (now_ms // HOUR_MS - hours) * HOUR_MS
         data = await asyncio.gather(*(self._ohlcv(s, since, now_ms) for s in symbols), return_exceptions=True)
-        cols = {}
+        out = {}
         for sym, rows in zip(symbols, data):
             if isinstance(rows, Exception):
                 log.warning("Не удалось загрузить %s: %s", sym, rows)
                 continue
             # Текущая незакрытая свеча не используется: иначе сигнал «подсматривает» внутрь часа.
-            closed = {r[0]: r[4] for r in rows if r[0] + HOUR_MS <= now_ms}
-            cols[sym] = pd.Series(closed, dtype=float)
-        df = pd.DataFrame(cols)
-        df.index = pd.to_datetime(df.index, unit="ms", utc=True)
+            rows = [r for r in rows if r[0] + HOUR_MS <= now_ms]
+            if not rows:
+                continue
+            df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"]).drop_duplicates("ts")
+            df.index = pd.to_datetime(df.pop("ts"), unit="ms", utc=True)
+            out[sym] = df.astype(float).sort_index()
+        return out
+
+    async def closes(self, symbols: list[str], hours: int, now: float | None = None) -> pd.DataFrame:
+        """Цены закрытия последних закрытых часовых свечей: строки — часы UTC, колонки — пары."""
+        frames = await self.candles(symbols, hours, now)
+        df = pd.DataFrame({s: f["close"] for s, f in frames.items()})
         full = pd.date_range(df.index.min(), df.index.max(), freq="h")
         return df.reindex(full).ffill(limit=3).sort_index()
 

@@ -1,0 +1,20 @@
+# Бот сигналов для ручной торговли. Скопируйте в signals.toml: python signals.py -c signals.toml run
+# Ключи API бирже не нужны. Для Telegram: TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в переменных окружения.
+
+exchange = "bybit"
+universe_size = 20          # топ-20 спотовых пар по объёму
+exclude = []
+
+min_votes = 15              # вход, только когда «за» все 15 стратегий
+sides = ["long"]            # шорты в исследовании хуже случайных
+top_k_filter = 0            # 3 — только монеты из топ-3 по моментуму отн. BTC (на 2026 году хуже)
+
+sl_atr = 2.0                # стоп-лосс
+tp_atr = 4.0                # тейк-профит
+max_hold_h = 24             # не сработало за сутки — закрыть
+
+deposit_usdt = 1000.0       # ваш депозит — для расчёта размера позиции
+risk_pct = 1.0              # сколько % депозита потерять, если сработает стоп
+
+check_minutes = 5
+state_file = "data/signals_state.json"

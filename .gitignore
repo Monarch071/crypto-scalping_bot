@@ -9,3 +9,6 @@ research/swing_out/
 research/xs_out/
 rotation.toml
 data/rotator_state.json
+signals.toml
+data/signals_state.json
+research/confluence_out/
