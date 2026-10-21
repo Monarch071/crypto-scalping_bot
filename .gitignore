@@ -6,3 +6,4 @@ data/*.jsonl.gz
 .pytest_cache/
 research/ml_out/
 research/swing_out/
+research/xs_out/
