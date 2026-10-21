@@ -1,0 +1,27 @@
+# Бот ротации монет. Скопируйте в rotation.toml и запускайте: python rotate.py -c rotation.toml run
+# Ключи — только в переменных окружения: BOT_API_KEY, BOT_API_SECRET (спот, БЕЗ права вывода средств),
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+
+mode = "paper"            # "paper" или "live" (для live ещё нужен флаг --live)
+exchange = "bybit"
+quote = "USDT"
+universe_size = 20        # топ-20 спотовых пар по объёму за 24 ч
+exclude = []              # например ["PEPE/USDT"]
+
+# Стратегия (проверена в research/xs_study.py, см. research/XS_REPORT.md)
+lookback_h = 168          # моментум относительно BTC за 7 дней
+rebalance_h = 8           # пересмотр в 00:00, 08:00, 16:00 UTC
+top_k = 3                 # держать 3 лучшие монеты поровну
+trend_ema_h = 720         # в рынке, только пока BTC выше EMA за 30 дней
+
+# Исполнение
+capital_fraction = 0.95
+rebalance_band = 0.05
+min_trade_usdt = 10.0
+max_slippage_bps = 30.0
+fee_bps = 10.0            # спот Bybit 0.1%
+
+# Риск
+max_drawdown = 0.35       # просадка от пика → продать всё и остановиться (/resume в Telegram)
+paper_start_usdt = 1000.0
+state_file = "data/rotator_state.json"

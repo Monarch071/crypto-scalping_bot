@@ -7,3 +7,5 @@ data/*.jsonl.gz
 research/ml_out/
 research/swing_out/
 research/xs_out/
+rotation.toml
+data/rotator_state.json
