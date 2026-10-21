@@ -30,7 +30,7 @@ def trend_then_breakout(n=1500, seed=0):
 
 
 def cfg(tmp_path=None, **kw):
-    base = dict(min_votes=14, top_k_filter=0, tp_atr=4.0, exit_votes=0, max_hold_h=24)
+    base = dict(min_votes=14, top_k_filter=0, tp_atr=4.0, exit_votes=0, max_hold_h=24, sl_pct=0.0)
     base.update(kw)
     if tmp_path is not None:
         base["state_file"] = str(tmp_path / "s.json")
@@ -142,9 +142,11 @@ def test_default_rules_no_take_profit_and_exit_when_strategies_disagree(tmp_path
     """Правила по умолчанию: без тейка, выход по сообщению бота, когда «за» станет меньше 10 из 15."""
     btc, coin = trend_then_breakout()
     c = SignalConfig(state_file=str(tmp_path / "s.json"), min_votes=14, top_k_filter=0)
-    assert c.tp_atr == 0 and c.exit_votes == 10 and c.max_hold_h == 72
+    assert c.tp_atr == 0 and c.exit_votes == 10 and c.max_hold_h == 72 and c.sl_pct == 5.0
     i, expected = first_signal(btc, coin, c)
     assert expected.tp is None
+    assert expected.sl == pytest.approx(expected.entry * 0.95)                  # стоп 5% ниже входа
+    assert expected.size * expected.entry == pytest.approx(10.0 / 0.05)         # риск $10 → покупка на $200
     # После сигнала монета резко разворачивается вниз (но не до стопа) — согласие стратегий пропадает.
     last = coin.close.iloc[i - 1]
     path = last * np.exp(np.r_[np.linspace(0.001, 0.004, 3), np.linspace(0.003, -0.012, 12)])

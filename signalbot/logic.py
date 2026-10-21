@@ -58,7 +58,8 @@ def find_signal(symbol: str, df: pd.DataFrame, btc_close: pd.Series, cfg: Signal
         now_n, prev_n = int((last == s).sum()), int((prev == s).sum())
         if now_n >= cfg.min_votes > prev_n:
             entry = float(df.close.iloc[-1])
-            sl = entry - s * cfg.sl_atr * a
+            dist = entry * cfg.sl_pct / 100 if cfg.sl_pct > 0 else cfg.sl_atr * a
+            sl = entry - s * dist
             tp = float(entry + s * cfg.tp_atr * a) if cfg.tp_atr > 0 else None
             risk = cfg.deposit_usdt * cfg.risk_pct / 100
             t = df.index[-1]
