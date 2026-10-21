@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+config.toml
+data/*.jsonl.gz
+.pytest_cache/

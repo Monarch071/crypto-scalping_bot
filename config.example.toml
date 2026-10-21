@@ -1,0 +1,46 @@
+# Скопируйте в config.toml и запускайте: python main.py -c config.toml run
+# Ключи и токены здесь НЕ пишутся, только переменные окружения:
+#   BOT_API_KEY, BOT_API_SECRET, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+mode = "paper"           # "paper" или "live" (для live ещё нужен флаг --live)
+record_path = ""         # например "data/live.jsonl.gz": писать маркет-дату для бэктестов
+log_level = "INFO"
+
+[exchange]
+name = "bybit"           # любое имя биржи из ccxt.pro
+symbol = "BTC/USDT:USDT" # бессрочный фьючерс
+testnet = true
+depth = 20
+tick_size = 0.1          # для paper/backtest; в live берётся с биржи
+lot_size = 0.001
+maker_fee_bps = 2.0      # 0.02%
+taker_fee_bps = 5.5      # 0.055%
+
+[strategy]
+order_size = 0.001
+min_half_spread_bps = 3.0     # должно быть больше maker_fee_bps, иначе работаете в минус
+vol_mult = 1.0
+vol_horizon_s = 10.0
+vol_halflife_s = 30.0
+inventory_skew_bps = 3.0
+alpha_imbalance_bps = 1.0
+alpha_flow_bps = 1.0
+imbalance_levels = 5
+flow_halflife_s = 10.0
+requote_threshold_bps = 1.0
+min_requote_interval_s = 0.25
+max_spread_bps = 20.0
+max_sigma_bps = 30.0
+warmup_samples = 50
+
+[risk]
+max_position = 0.005          # в базовой валюте (BTC)
+max_order_notional = 500.0    # USDT
+max_daily_loss = 20.0         # USDT; при достижении бот останавливается
+max_price_deviation_bps = 50.0
+max_orders_per_minute = 120
+stale_data_s = 5.0
+flatten_on_kill = true
+
+[paper]
+latency_ms = 80.0
