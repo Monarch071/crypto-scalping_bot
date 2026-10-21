@@ -86,7 +86,8 @@ class SignalBot:
             sig = find_signal(sym, df, btc.close, cfg, allowed)
             if sig:
                 self.open.append(sig)
-                await self._say(format_signal(sig, ranks.get(sym), cfg.exit_votes))
+                await self._say(format_signal(sig, ranks.get(sym), cfg.exit_votes, cfg.deposit_usdt,
+                                              cfg.min_order_usdt))
 
     async def _exits_by_candles(self, frames: dict) -> None:
         for sig in list(self.open):
@@ -106,7 +107,8 @@ class SignalBot:
         msg = {"tp": "🎯 Тейк-профит", "sl": "🛑 Стоп-лосс", "time": "⏰ Время вышло — закройте позицию",
                "signal": "⚠️ Стратегии больше не согласны — закройте позицию"}[kind]
         await self._say(f"{msg}: {sig.symbol} {('лонг' if sig.side == 'long' else 'шорт')} по {price:.6g}{extra}\n"
-                        f"Результат: {sig.r:+.2f}R ({sig.net_bps:+.0f} б.п. с комиссиями)")
+                        f"Результат: {sig.net_bps / 1e4 * sig.size * sig.entry:+.2f} USDT "
+                        f"({sig.net_bps / 100:+.2f}% к сумме покупки, {sig.r:+.2f}R, с комиссиями)")
 
     # --- между часами: только стоп/тейк по текущей цене, чтобы сообщить быстрее ---
     async def quick_check(self, now: float) -> None:

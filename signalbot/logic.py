@@ -61,13 +61,18 @@ def find_signal(symbol: str, df: pd.DataFrame, btc_close: pd.Series, cfg: Signal
             dist = entry * cfg.sl_pct / 100 if cfg.sl_pct > 0 else cfg.sl_atr * a
             sl = entry - s * dist
             tp = float(entry + s * cfg.tp_atr * a) if cfg.tp_atr > 0 else None
-            risk = cfg.deposit_usdt * cfg.risk_pct / 100
+            if cfg.position_pct > 0:
+                size = cfg.deposit_usdt * cfg.position_pct / 100 / entry
+                risk = size * dist
+            else:
+                risk = cfg.deposit_usdt * cfg.risk_pct / 100
+                size = risk / dist
             t = df.index[-1]
             return Signal(id=f"{symbol}-{t:%Y%m%d%H}-{side}", symbol=symbol, side=side, time=t.isoformat(),
                           entry=entry, sl=float(sl), tp=tp,
                           # Вход по закрытию часа t (в t + 1 ч), выход по времени — через max_hold_h после входа.
                           expires=(t + pd.Timedelta(hours=cfg.max_hold_h + 1)).isoformat(),
-                          size=risk / abs(entry - sl), risk_usdt=risk,
+                          size=size, risk_usdt=risk,
                           agree=[n for n in V.columns if last[n] == s])
     return None
 
@@ -112,7 +117,7 @@ def stats(closed: list[Signal]) -> str:
             f"стоп {kinds.get('sl', 0)}, по времени {kinds.get('time', 0)})\n"
             f"Прибыльных: {(r > 0).mean():.0%}\nСредний результат: {r.mean():+.2f}R "
             f"({np.mean([s.net_bps for s in closed]):+.1f} б.п.)\n"
-            f"Сумма: {r.sum():+.1f}R — при риске 1% это {r.sum():+.1f}% депозита\n"
+            f"Сумма: {r.sum():+.1f}R, в деньгах {sum(s.net_bps / 1e4 * s.size * s.entry for s in closed):+.2f} USDT\n"
             f"Макс. просадка: {dd:.1f}R\nt-статистика: {t:+.1f} "
             f"({'уже значимо' if t > 3 else 'пока не доказано, нужно t > 3'})")
 
@@ -121,7 +126,8 @@ def fmt_price(x: float) -> str:
     return f"{x:.6g}"
 
 
-def format_signal(sig: Signal, rank: int | None = None, exit_votes: int = 0) -> str:
+def format_signal(sig: Signal, rank: int | None = None, exit_votes: int = 0, deposit: float = 0.0,
+                  min_order: float = 0.0) -> str:
     arrow = "🟢 ЛОНГ (покупка)" if sig.side == "long" else "🔴 ШОРТ (продажа)"
     pct = lambda p: (p / sig.entry - 1) * 100  # noqa: E731
     tp = (f"Тейк-профит: {fmt_price(sig.tp)} ({pct(sig.tp):+.2f}%)\n" if sig.tp is not None else
@@ -131,8 +137,12 @@ def format_signal(sig: Signal, rank: int | None = None, exit_votes: int = 0) -> 
             f"Стоп-лосс: {fmt_price(sig.sl)} ({pct(sig.sl):+.2f}%) — поставить сразу\n"
             + tp +
             f"Закрыть в любом случае до: {pd.Timestamp(sig.expires):%d.%m %H:%M} UTC\n"
-            f"Размер: {sig.size:.6g} {sig.symbol.split('/')[0]} (≈{sig.size * sig.entry:.2f} USDT, "
-            f"риск {sig.risk_usdt:.2f} USDT)\n"
+            f"Купить: {sig.size:.6g} {sig.symbol.split('/')[0]} на ≈{sig.size * sig.entry:.2f} USDT\n"
+            f"Если сработает стоп, убыток ≈{sig.risk_usdt:.2f} USDT"
+            + (f" ({sig.risk_usdt / deposit:.2%} банка)" if deposit else "") + "\n"
+            + (f"⚠️ Это меньше минимального ордера биржи ({min_order:.0f} USDT): "
+               f"увеличьте банк или долю покупки\n" if min_order and sig.size * sig.entry < min_order else "")
+            +
             f"За: {len(sig.agree)} из {STRATEGY_COUNT}"
             + (f", моментум отн. BTC: #{rank}" if rank else "") +
             "\nВажно: входите по каждому сигналу — прибыль дают редкие крупные сделки.")

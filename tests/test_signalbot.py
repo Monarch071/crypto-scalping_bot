@@ -170,3 +170,19 @@ def test_default_rules_no_take_profit_and_exit_when_strategies_disagree(tmp_path
             break
     assert bot.closed and bot.closed[0].status == "signal"
     assert "больше не согласны" in msgs[-1]
+
+
+def test_position_percent_sizing_and_min_order_warning():
+    from signalbot.logic import format_signal
+
+    btc, coin = trend_then_breakout()
+    c = cfg(sl_pct=10.0, position_pct=1.0, deposit_usdt=100.0)
+    _, s = first_signal(btc, coin, c)
+    assert s.size * s.entry == pytest.approx(1.0)          # покупка на 1% банка = $1
+    assert s.sl == pytest.approx(s.entry * 0.9)            # стоп 10% ниже входа
+    assert s.risk_usdt == pytest.approx(0.10)              # можно потерять 10 центов = 0.1% банка
+    text = format_signal(s, deposit=100.0, min_order=5.0)
+    assert "0.10%" in text and "меньше минимального ордера" in text
+    c2 = cfg(sl_pct=10.0, position_pct=1.0, deposit_usdt=600.0)
+    _, s2 = first_signal(btc, coin, c2)
+    assert "меньше минимального" not in format_signal(s2, deposit=600.0, min_order=5.0)
