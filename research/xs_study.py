@@ -165,8 +165,9 @@ def main():
     btc_up = btc > btc.ewm(span=24 * 30, adjust=False).mean()
     years = close.index.year
     sigs = rule_signals(f)
-    rets = {}
-    for R in (4, 8, 24):
+    cache = out / "rets.pkl"
+    rets = pd.read_pickle(cache) if cache.exists() else {}
+    for R in (4, 8, 24) if not rets else ():
         sigs_R = dict(sigs)
         sigs_R["ML-ранжирование (LightGBM)"] = ml_signal(f, close, alive, R)
         for (sname, score), k, mode in itertools.product(sigs_R.items(), (2, 3),
@@ -175,10 +176,11 @@ def main():
             ret, to = backtest(close, w)
             rets[(sname, R, k, mode)] = (ret, to)
         print(f"R={R}: done", flush=True)
+    pd.to_pickle(rets, cache)
 
     # Бенчмарки: равные доли всех живых монет (ребаланс раз в сутки) и BTC.
     ew = alive.astype(float).div(alive.sum(axis=1), axis=0)
-    ew = ew.where(ew.index.hour == 0).ffill().fillna(0.0)
+    ew = ew.loc[ew.index.hour == 0].reindex(ew.index).ffill().fillna(0.0)
     bench = {"Равные доли всех монет": backtest(close, ew),
              "BTC купил и держи": backtest(close, pd.DataFrame({c: 1.0 if c == "BTCUSDT" else 0.0
                                                                for c in close.columns}, index=close.index))}
