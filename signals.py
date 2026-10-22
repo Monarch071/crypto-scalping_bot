@@ -52,7 +52,8 @@ async def cmd_run(cfg: SignalConfig) -> None:
         exit_rule = f"тейк {cfg.tp_atr} ATR" if cfg.tp_atr > 0 else f"выход, когда «за» < {cfg.exit_votes}/15"
         await notifier.send(f"▶️ Бот сигналов запущен: вход при {cfg.min_votes}/15"
                             + (f" в топ-{cfg.top_k_filter} по силе" if cfg.top_k_filter else "")
-                            + f", стоп {cfg.sl_atr} ATR, {exit_rule}, максимум {cfg.max_hold_h} ч")
+                            + (f", стоп {cfg.sl_pct}%" if cfg.sl_pct > 0 else f", стоп {cfg.sl_atr} ATR")
+                            + f", {exit_rule}, максимум {cfg.max_hold_h} ч")
         while not stop.is_set():
             try:
                 await bot.step()
