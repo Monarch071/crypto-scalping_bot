@@ -8,6 +8,7 @@ data/rotator_state.json
 data/signals_state.json
 research/confluence_out/
 research/ml_out/
+research/news_out/
 research/swing_out/
 research/xs_out/
 rotation.toml
