@@ -1,0 +1,16 @@
+*.pyc
+.env
+.pytest_cache/
+__pycache__/
+config.toml
+data/*.jsonl.gz
+data/rotator_state.json
+data/signals_state.json
+research/confluence_out/
+research/mass_out/
+research/ml_out/
+research/news_out/
+research/swing_out/
+research/xs_out/
+rotation.toml
+signals.toml
